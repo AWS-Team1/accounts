@@ -1,0 +1,12 @@
+version: 2
+updates:
+  - package-ecosystem: docker
+    directory: /src/accounts/contacts
+    target-branch: dev
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /src/accounts/userservice
+    target-branch: dev
+    schedule:
+      interval: weekly
