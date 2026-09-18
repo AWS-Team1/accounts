@@ -56,7 +56,11 @@ ENV LOG_LEVEL=info
 # Add application code.
 COPY . .
 
+# Fail the image build if the runtime virtual environment or Gunicorn launcher
+# was overwritten by files from the Docker build context.
+RUN /app/.venv/bin/gunicorn --version
+
 # Ensure files are readable for non-root users
 RUN chmod a+r *
 
-CMD gunicorn -b :$PORT --threads 4 --log-config logging.conf --log-level=$LOG_LEVEL "contacts:create_app()"
+CMD /app/.venv/bin/gunicorn -b :$PORT --threads 4 --log-config logging.conf --log-level=$LOG_LEVEL "contacts:create_app()"
