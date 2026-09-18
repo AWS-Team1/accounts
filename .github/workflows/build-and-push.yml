@@ -253,6 +253,8 @@ jobs:
           provenance: false
           tags: ${{ steps.meta.outputs.image }}
           outputs: type=docker,dest=${{ runner.temp }}/image.tar
+          build-args: |
+            SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
           cache-from: type=gha,scope=accounts-${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=accounts-${{ matrix.service }}
 
