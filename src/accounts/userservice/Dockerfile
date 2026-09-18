@@ -13,8 +13,12 @@
 # limitations under the License.
 
 # Use the official Python docker container, slim version, running Debian
-FROM python:3.14.6-slim@sha256:7bec7ddcddeff7975d6ba9b4be7dd6f6b2f55e7491539145e2978f7f97ce9144 AS base
+FROM python:3.14.7-slim-bookworm@sha256:9ab8d9c8514b44f90cf0029dd42fdd7e9e211e639c8b995304cc04568dee900f AS base
+
 COPY --from=ghcr.io/astral-sh/uv:0.12.10@sha256:2bb3ebca0a796a155094a27773d290c4b074572e6107f171d88d086682fd2500 /uv /bin/uv
+
+# uv로 가상환경을 구성하므로 취약한 패키지를 포함한 시스템 pip는 제거
+RUN python -m pip uninstall -y pip
 
 FROM base AS builder
 
@@ -30,8 +34,15 @@ FROM base
 # Set our working directory
 WORKDIR /app
 
-# Trivy: Debian 보안 업데이트 적용 (util-linux/perl 등 fixable OS CVE 제거)
-RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+# Trivy: Debian 보안 업데이트 적용
+ARG SECURITY_REFRESH=manual
+
+RUN set -eux; \
+    echo "security refresh: ${SECURITY_REFRESH}"; \
+    apt-get update; \
+    apt-get upgrade -y; \
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/*
 
 COPY --from=builder /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
