@@ -3,5 +3,6 @@ k8s
 __pycache__
 .pytest_cache
 .coverage
+.venv
 README.md
 skaffold.yaml
