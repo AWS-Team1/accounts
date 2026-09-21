@@ -77,7 +77,8 @@ def create_app():
             auth_payload = jwt.decode(
                 token, key=app.config["PUBLIC_KEY"], algorithms="RS256"
             )
-            if username != auth_payload["user"]:
+            if (auth_payload.get("token_type") != "access"
+                    or username != auth_payload["user"]):
                 raise PermissionError
 
             contacts_list = contacts_db.get_contacts(username)
@@ -112,7 +113,8 @@ def create_app():
             auth_payload = jwt.decode(
                 token, key=app.config["PUBLIC_KEY"], algorithms="RS256"
             )
-            if username != auth_payload["user"]:
+            if (auth_payload.get("token_type") != "access"
+                    or username != auth_payload["user"]):
                 raise PermissionError
             req = {
                 k: (bleach.clean(v) if isinstance(v, str) else v)

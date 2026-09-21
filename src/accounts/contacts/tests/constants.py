@@ -35,7 +35,11 @@ EXAMPLE_PRIVATE_KEY, EXAMPLE_PUBLIC_KEY = generate_rsa_key()
 
 EXAMPLE_USER = "foo"
 
-EXAMPLE_USER_PAYLOAD = {"user": EXAMPLE_USER, "acct": "1234512345"}
+EXAMPLE_USER_PAYLOAD = {
+    "user": EXAMPLE_USER,
+    "acct": "1234512345",
+    "token_type": "access",
+}
 
 EXAMPLE_TOKEN = jwt.encode(
     EXAMPLE_USER_PAYLOAD, EXAMPLE_PRIVATE_KEY, algorithm="RS256"

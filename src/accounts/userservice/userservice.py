@@ -31,6 +31,7 @@ import jwt
 from flask import Flask, jsonify, request
 import bleach
 import redis
+from redis.cluster import RedisCluster
 from redis.exceptions import RedisError
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
@@ -55,6 +56,21 @@ def create_app():
     if redis_url:
         redis_client = redis.Redis.from_url(
             redis_url,
+            decode_responses=True,
+            socket_connect_timeout=2,
+            socket_timeout=2,
+        )
+    elif os.environ.get('VALKEY_HOST'):
+        use_tls = os.environ.get('VALKEY_TLS', 'true').lower() == 'true'
+        client_class = (RedisCluster if os.environ.get(
+            'VALKEY_CLUSTER_MODE', 'true').lower() == 'true' else redis.Redis)
+        redis_client = client_class(
+            host=os.environ['VALKEY_HOST'],
+            port=int(os.environ.get('VALKEY_PORT', '6379')),
+            username=os.environ.get('VALKEY_USERNAME'),
+            password=os.environ.get('VALKEY_PASSWORD'),
+            ssl=use_tls,
+            ssl_cert_reqs='required' if use_tls else None,
             decode_responses=True,
             socket_connect_timeout=2,
             socket_timeout=2,
@@ -200,9 +216,25 @@ def create_app():
         if not req['password'] == req['password-repeat']:
             raise UserWarning('passwords do not match')
 
-    @app.route('/login', methods=['GET'])
+    def _issue_token(user, token_type, expiry_seconds):
+        """Create a signed internal JWT for an authenticated user."""
+        now = datetime.utcnow()
+        full_name = user.get('name') or '{} {}'.format(
+            user['firstname'], user['lastname'])
+        payload = {
+            'user': user['username'],
+            'acct': user['accountid'],
+            'name': full_name,
+            'iat': now,
+            'exp': now + timedelta(seconds=expiry_seconds),
+            'jti': uuid.uuid4().hex,
+            'token_type': token_type,
+        }
+        return jwt.encode(payload, app.config['PRIVATE_KEY'], algorithm='RS256')
+
+    @app.route('/login', methods=['POST'])
     def login():
-        """Login a user and return a JWT token
+        """Login a user and return server-side access and refresh JWTs.
 
         Fails if username doesn't exist or password doesn't match hash
 
@@ -213,8 +245,10 @@ def create_app():
         - password
         """
         app.logger.debug('Sanitizing login input.')
-        username = bleach.clean(request.args.get('username'))
-        password = bleach.clean(request.args.get('password'))
+        username = bleach.clean(request.form.get('username', ''))
+        password = request.form.get('password', '')
+        if not username or not password:
+            return 'missing username or password', 400
 
         # Get user data
         try:
@@ -228,22 +262,16 @@ def create_app():
             if not bcrypt.checkpw(password.encode('utf-8'), user['passhash']):
                 raise PermissionError('invalid login')
 
-            full_name = '{} {}'.format(user['firstname'], user['lastname'])
-            exp_time = datetime.utcnow() + timedelta(seconds=app.config['EXPIRY_SECONDS'])
-            payload = {
-                'user': username,
-                'acct': user['accountid'],
-                'name': full_name,
-                'iat': datetime.utcnow(),
-                'exp': exp_time,
-                # Unique session id so the frontend can track and revoke this
-                # token server-side (e.g. immediate logout) via Redis.
-                'jti': uuid.uuid4().hex,
-            }
-            app.logger.debug('Creating jwt token.')
-            token = jwt.encode(payload, app.config['PRIVATE_KEY'], algorithm='RS256')
+            app.logger.debug('Creating access and refresh tokens.')
+            access_token = _issue_token(
+                user, 'access', app.config['ACCESS_TOKEN_EXPIRY_SECONDS'])
+            refresh_token = _issue_token(
+                user, 'refresh', app.config['REFRESH_TOKEN_EXPIRY_SECONDS'])
             app.logger.info('Login Successful.')
-            return jsonify({'token': token}), 200
+            return jsonify({
+                'access_token': access_token,
+                'refresh_token': refresh_token,
+            }), 200
 
         except LookupError as err:
             app.logger.error('Error logging in: %s', str(err))
@@ -254,6 +282,33 @@ def create_app():
         except SQLAlchemyError as err:
             app.logger.error('Error logging in: %s', str(err))
             return 'failed to retrieve user information', 500
+
+    @app.route('/token/refresh', methods=['POST'])
+    def refresh_access_token():
+        """Exchange a valid refresh JWT for a new short-lived access JWT."""
+        authorization = request.headers.get('Authorization', '')
+        if not authorization.startswith('Bearer '):
+            return 'missing refresh token', 401
+        refresh_token = authorization.removeprefix('Bearer ').strip()
+        try:
+            claims = jwt.decode(
+                jwt=refresh_token,
+                key=app.config['PUBLIC_KEY'],
+                algorithms=['RS256'],
+            )
+            if claims.get('token_type') != 'refresh':
+                raise jwt.InvalidTokenError('wrong token type')
+            user = {
+                'username': claims['user'],
+                'accountid': claims['acct'],
+                'name': claims['name'],
+            }
+            access_token = _issue_token(
+                user, 'access', app.config['ACCESS_TOKEN_EXPIRY_SECONDS'])
+            return jsonify({'access_token': access_token}), 200
+        except (jwt.InvalidTokenError, KeyError) as err:
+            app.logger.info('Refresh token rejected: %s', str(err))
+            return 'invalid refresh token', 401
 
     @atexit.register
     def _shutdown():
@@ -280,7 +335,10 @@ def create_app():
         app.logger.info("🚫 Tracing disabled.")
 
     app.config['VERSION'] = os.environ.get('VERSION')
-    app.config['EXPIRY_SECONDS'] = int(os.environ.get('TOKEN_EXPIRY_SECONDS'))
+    app.config['ACCESS_TOKEN_EXPIRY_SECONDS'] = int(
+        os.environ.get('ACCESS_TOKEN_EXPIRY_SECONDS', '120'))
+    app.config['REFRESH_TOKEN_EXPIRY_SECONDS'] = int(
+        os.environ.get('REFRESH_TOKEN_EXPIRY_SECONDS', '3600'))
     app.config['PRIVATE_KEY'] = open(os.environ.get('PRIV_KEY_PATH'), 'r').read()
     app.config['PUBLIC_KEY'] = open(os.environ.get('PUB_KEY_PATH'), 'r').read()
 

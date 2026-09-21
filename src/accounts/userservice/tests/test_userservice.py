@@ -233,14 +233,15 @@ class TestUserservice(unittest.TestCase):
         # set private key
         self.flask_app.config['PRIVATE_KEY'] = EXAMPLE_PRIVATE_KEY
         # send request to test client
-        response = self.test_app.get('/login', query_string=example_user_request)
+        response = self.test_app.post('/login', data=example_user_request)
         # assert 200 response
         self.assertEqual(response.status_code, 200)
-        # assert we get a json response with just token key
-        self.assertEqual(list(response.json.keys()), ['token'])
+        # Access JWTs are short-lived and refresh JWTs remain server-side.
+        self.assertEqual(
+            set(response.json.keys()), {'access_token', 'refresh_token'})
         # decode payload using public key
         decoded_value = jwt.decode(algorithms='RS256',
-                                   jwt=response.json['token'],
+                                   jwt=response.json['access_token'],
                                    key=EXAMPLE_PUBLIC_KEY,)
         # assert fields match user request
         self.assertEqual(decoded_value['user'], EXAMPLE_USER['username'])
@@ -248,6 +249,31 @@ class TestUserservice(unittest.TestCase):
             decoded_value['name'],
             "{} {}".format(EXAMPLE_USER['firstname'], EXAMPLE_USER['lastname']),
         )
+        self.assertEqual(decoded_value['token_type'], 'access')
+        refresh_value = jwt.decode(algorithms='RS256',
+                                   jwt=response.json['refresh_token'],
+                                   key=EXAMPLE_PUBLIC_KEY,)
+        self.assertEqual(refresh_value['token_type'], 'refresh')
+
+        # A refresh token can mint another short-lived access token.
+        self.flask_app.config['PUBLIC_KEY'] = EXAMPLE_PUBLIC_KEY
+        refresh_response = self.test_app.post(
+            '/token/refresh',
+            headers={'Authorization': 'Bearer ' + response.json['refresh_token']},
+        )
+        self.assertEqual(refresh_response.status_code, 200)
+        refreshed_value = jwt.decode(algorithms='RS256',
+                                     jwt=refresh_response.json['access_token'],
+                                     key=EXAMPLE_PUBLIC_KEY,)
+        self.assertEqual(refreshed_value['token_type'], 'access')
+        self.assertEqual(refreshed_value['user'], EXAMPLE_USER['username'])
+
+        # An access token cannot be used at the refresh endpoint.
+        invalid_refresh = self.test_app.post(
+            '/token/refresh',
+            headers={'Authorization': 'Bearer ' + response.json['access_token']},
+        )
+        self.assertEqual(invalid_refresh.status_code, 401)
 
     # mock check pw to return false
     @patch('bcrypt.checkpw', return_value=False)
@@ -257,7 +283,7 @@ class TestUserservice(unittest.TestCase):
         example_user = EXAMPLE_USER.copy()
         example_user_request = EXAMPLE_USER_REQUEST.copy()
         self.mocked_db.return_value.get_user.return_value = example_user
-        response = self.test_app.get('/login', query_string=example_user_request)
+        response = self.test_app.post('/login', data=example_user_request)
         # assert 401 response
         self.assertEqual(response.status_code, 401)
         # assert we get correct error message
@@ -271,7 +297,7 @@ class TestUserservice(unittest.TestCase):
         example_user_request = EXAMPLE_USER_REQUEST.copy()
         example_user_request['username'] = 'foo'
         # send request to test client
-        response = self.test_app.get('/login', query_string=example_user_request)
+        response = self.test_app.post('/login', data=example_user_request)
         # assert 404 response
         self.assertEqual(response.status_code, 404)
         # assert we get correct error message
