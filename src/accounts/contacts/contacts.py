@@ -37,6 +37,7 @@ from opentelemetry.propagators.cloud_trace_propagator import CloudTraceFormatPro
 from opentelemetry.instrumentation.flask import FlaskInstrumentor
 
 from db import ContactsDb
+from cache_store import ContactsCache, create_valkey_client
 
 
 def create_app():
@@ -81,7 +82,10 @@ def create_app():
                     or username != auth_payload["user"]):
                 raise PermissionError
 
-            contacts_list = contacts_db.get_contacts(username)
+            contacts_list = contacts_cache.get(username)
+            if contacts_list is None:
+                contacts_list = contacts_db.get_contacts(username)
+                contacts_cache.set(username, contacts_list)
             app.logger.debug("Successfully retrieved contacts.")
             return jsonify(contacts_list), 200
         except (PermissionError, jwt.exceptions.InvalidTokenError) as err:
@@ -134,6 +138,8 @@ def create_app():
             # Add contact_data to database
             app.logger.debug("Adding new contact to the database.")
             contacts_db.add_contact(contact_data)
+            # DB write completed first; remove any stale cached list.
+            contacts_cache.invalidate(username)
             app.logger.info("Successfully added new contact.")
             return jsonify({}), 201
 
@@ -223,6 +229,12 @@ def create_app():
     except OperationalError:
         app.logger.critical("database connection failed")
         sys.exit(1)
+    contacts_cache = ContactsCache(
+        create_valkey_client(),
+        ttl_seconds=int(os.getenv("CONTACTS_CACHE_TTL_SECONDS", "600")),
+        jitter_seconds=int(os.getenv("CONTACTS_CACHE_JITTER_SECONDS", "60")),
+        logger=app.logger,
+    )
     return app
 
 
