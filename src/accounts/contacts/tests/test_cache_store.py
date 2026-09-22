@@ -2,9 +2,21 @@
 
 from unittest.mock import Mock, patch
 
-from redis.exceptions import RedisError
+from redis.exceptions import RedisClusterException, RedisError
 
-from contacts.cache_store import ContactsCache
+from contacts.cache_store import ContactsCache, create_valkey_client
+
+
+@patch.dict("contacts.cache_store.os.environ", {
+    "VALKEY_HOST": "unreachable.invalid",
+    "VALKEY_CLUSTER_MODE": "true",
+})
+@patch("contacts.cache_store.RedisCluster")
+def test_create_client_treats_cluster_initialization_error_as_unavailable(
+        redis_cluster):
+    redis_cluster.side_effect = RedisClusterException("unavailable")
+
+    assert create_valkey_client() is None
 
 
 def test_get_returns_cached_contacts():

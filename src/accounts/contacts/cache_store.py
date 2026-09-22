@@ -7,7 +7,7 @@ import random
 
 import redis
 from redis.cluster import RedisCluster
-from redis.exceptions import RedisError
+from redis.exceptions import RedisClusterException, RedisError
 
 
 def create_valkey_client():
@@ -38,7 +38,7 @@ def create_valkey_client():
             ssl_cert_reqs="required" if use_tls else None,
             **common,
         )
-    except RedisError:
+    except (RedisError, RedisClusterException):
         return None
 
 
