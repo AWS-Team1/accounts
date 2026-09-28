@@ -27,7 +27,6 @@ env:
   GITOPS_REPOSITORY: AWS-TEAM1/gitops
   GITOPS_BRANCH: ${{ vars.GITOPS_BRANCH || 'dev' }}
   EKS_GITOPS_GROUP_DIR: 03_manifests/overlays/eks/accounts
-  GKE_GITOPS_GROUP_DIR: 03_manifests/overlays/gke/accounts
 
 jobs:
   # ============================================================
@@ -1282,11 +1281,7 @@ jobs:
       #    03_manifests/eks/accounts/<service>.yaml
       #    -> ECR
       #
-      # 2. GKE GitOps manifest
-      #    03_manifests/gke/accounts/<service>.yaml
-      #    -> GAR
-      #
-      # 3. Manual EKS manifest
+      # 2. Manual EKS manifest
       #    manual/eks/<service>.yaml
       #    -> ECR
       # --------------------------------------------------------
@@ -1299,11 +1294,9 @@ jobs:
           IMAGE_TAG: sha-${{ github.sha }}
 
           EKS_GROUP_DIR: ${{ env.EKS_GITOPS_GROUP_DIR }}
-          GKE_GROUP_DIR: ${{ env.GKE_GITOPS_GROUP_DIR }}
           MANUAL_EKS_DIR: manual/eks
 
           ECR_REGISTRY: ${{ env.ECR_REGISTRY }}
-          GAR_REPOSITORY: ${{ env.GAR_REPOSITORY }}
 
           CHANGED_LIST: ${{ runner.temp }}/gitops-changed-files.txt
 
@@ -1328,14 +1321,9 @@ jobs:
           tag = os.environ["IMAGE_TAG"]
 
           ecr_registry = os.environ["ECR_REGISTRY"]
-          gar_repository = os.environ["GAR_REPOSITORY"]
 
           eks_group_dir = Path(
               os.environ["EKS_GROUP_DIR"]
-          )
-
-          gke_group_dir = Path(
-              os.environ["GKE_GROUP_DIR"]
           )
 
           manual_eks_dir = Path(
@@ -1465,22 +1453,11 @@ jobs:
                   f"boa-{service}:{tag}"
               )
 
-              gar_image = (
-                  f"{gar_repository}/"
-                  f"boa-{service}:{tag}"
-              )
-
               targets = [
                   # Argo CD / EKS
                   (
                       eks_group_dir / f"{service}.yaml",
                       ecr_image,
-                  ),
-
-                  # Argo CD / GKE
-                  (
-                      gke_group_dir / f"{service}.yaml",
-                      gar_image,
                   ),
 
                   # Manual EKS deployment
